@@ -3,6 +3,7 @@ import tkinter as tk
 #from tkinter import *
 import tkinter.messagebox as mb
 import math, threading, socket
+import Radar_tracking_func as tracking
 
 DEFAULT_HOST = 'multiverse.cloud.c2lab.nl'
 DEFAULT_PORT = 9800
@@ -10,6 +11,8 @@ DEFAULT_SCALE = 25 #Km
 DEFAULT_USER = 'tsit-a'
 
 SIZE = 1000
+
+
 
 class RadarDisplay(tk.Frame):
 
@@ -24,6 +27,8 @@ class RadarDisplay(tk.Frame):
         self.systems = set()
         self.updated = False
         self.canons = set()
+        self.FO = set()
+        self.shotFired = False
 
         # Create toolbar
         connectbar = tk.Frame(self)
@@ -100,7 +105,7 @@ class RadarDisplay(tk.Frame):
         
 
         # Create canvas
-        self.canvas = tk.Canvas(self, width = SIZE, height = SIZE, bg='black')
+        self.canvas = tk.Canvas(self, width = SIZE*1.5, height = SIZE, bg='black')
         self.canvas.pack()
 
         self.time = 0
@@ -203,7 +208,24 @@ class RadarDisplay(tk.Frame):
             contact_y = center_y + math.sin(math.radians(angle - 90)) * scaled_distance
             radius = 5 
             self.canvas.create_oval(contact_x - radius, contact_y - radius, contact_x + radius, contact_y + radius, fill='green')
-
+        
+        #Draw Sitrep
+        textx = 1050
+        texty = 250
+        sitrep = ''
+        if len(self.FO) > 1:
+            for contact in self.FO:
+                sitrep += f"Contact nr {contact.ID}: \n"
+                sitrep += f"Distance: {round(contact.ground_distance)} \n"
+                if contact.speedTot != None and contact.speedTot != 0.0:
+                    print(contact.speedTot)
+                    sitrep += f"Speed: {round(contact.speedTot)} \n"
+                if type(contact.cpa) != str and contact.cpa != None:
+                    sitrep += f"CPA: {round(contact.cpa)}   TCPA: {round(contact.Tcpa)} \n"
+                sitrep += "\n"
+            self.canvas.create_text(textx, texty, anchor=tk.W, font="Purisa",
+            text=sitrep, fill ='green' )
+        
     def onScaleChange(self, *args):
         self.redraw()
 
@@ -240,7 +262,10 @@ class RadarDisplay(tk.Frame):
                     distance = float(parts[3])
 
                     # Compute the distance on the ground plane
-                    ground_distance = distance * math.cos(math.radians(elevation)) 
+                    ground_distance = distance * math.cos(math.radians(elevation))
+                    
+                    #process data in radar for tracking
+                    self.processRadar(heading, elevation, distance, ground_distance, t)
 
                     # Reset contacts when the virtual clock increases
                     if t != self.time:
@@ -306,6 +331,34 @@ class RadarDisplay(tk.Frame):
             return "Connect first"
         else:
             self.connection2.sendMessage('FIRE')
+            self.shotFired = [True , 2]
+            
+    def processRadar(self, heading, elevation, distance, ground_distance, time):
+        
+        if self.FO == set():
+            self.FO.add(tracking.Contact(heading,elevation,distance,ground_distance, time, 1))
+        else:
+            a = dict()
+            pos = tracking.relativepos(heading, elevation, distance, ground_distance)
+            
+                     
+            for i in self.FO:
+                a[i.compare(pos)] = i
+            
+            if min(a) < 300:
+                a[min(a)].update(heading, elevation, distance, ground_distance, pos, time)
+                print('Updated', len (self.FO))
+            elif self.shotFired == [True, 2]:
+                self.FO.add(tracking.Contact(heading,elevation,distance,ground_distance, time, len(self.FO)+1))
+                self.shotFired = [True , 1]
+            elif self.shotFired == [True, 1]:
+                a[min(a)].update(heading, elevation, distance, ground_distance, pos, time)
+                self.shotFired = False
+            
+            else:
+                self.FO.add(tracking.Contact(heading,elevation,distance,ground_distance, time, len(self.FO)+1))
+                print('New')
+                
 
 class ConnectionThread(threading.Thread):
 
